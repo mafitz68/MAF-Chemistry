@@ -1,0 +1,186 @@
+I am doing a final project for my beginner coding class. The language is python. I am using drafter version 2.2.0 to deploy a website. I will first tell you the project requirements, then tell you the idea for the project. 
+
+These are the requirements you must fulfill:
+
+At least 7 routes.
+At least 5 Pages, or 10 FragmentsLinks to an external site., or a combination thereof.
+The implementation of the State dataclass must have at least 4 fields.
+At least one field must be a list of class instances or a dictionary of class instances.
+This means that there must be a second dataclass.
+At least 4 state fields, including the list or dictionary of class instances, must each be meaningfully modified in at least one route; those 4 state fields cannot be constants.
+At least 3 input fields (TextBox, CheckBox, SelectBox, TextArea). They don't have to be the same type.
+At least 3 meaningful if statements.
+At least 1 loop that iterates over an attribute of the list of class instances or dictionary of class instances in a meaningful way.
+The site should have a legitimate purpose or functionality.
+No global variables ( are fine).
+You must use the Drafter library.
+Any advanced coding techniques (i.e. that weren't covered in this course) used are thoroughly documented in the code.
+
+Here are some more requirements:
+
+Chosen good variable names (check last two sections of )
+Unit tested your functions where possible, being : each route must have at least one unit test, if possible (routes that have randomization are difficult to unit test, so they are not required to).
+If a function can't be unit tested, you must note as much in a docstring or comment.
+Broke up excessively long lines (80 characters is a good rule of thumb, but we'll be strict about not exceeding 120 characters)
+Included types in your function headers
+Included good as the first line of your function's body
+Decomposed complicated functions with helper functions
+
+Here is the idea for the project that I expect you to code:
+
+Create an automated chemistry assistant that takes balanced reaction equations, starting reactant masses, and a harvested product amount to determine the limiting reactant, theoretical yield, and percent yield based on principles from. In addition, ask the user for the molecular masses and delta H value. The program outputs an organized breakdown of limiting reagent status, product yields, and remaining masses of unreacted species. Also use the heat of the reaction to determine if it is exothermic or endothermic, and compute the heat flow per mole of the product.
+
+Before you provide code, ask me about any unclear or iffy instructions if you have any.
+
+…
+
+Worked for 18s
+Absolutely. Before writing any code, I want to make sure the project is designed correctly, satisfies every rubric requirement, and remains appropriate for a beginner Python course using Drafter 2.2.0.
+
+I understand the overall objective: users will enter a balanced chemical equation, reactant masses, molecular masses, the experimentally harvested product amount, and the reaction's ΔH. The website will then perform the stoichiometric calculations and present an organized analysis.
+
+I have a few questions and clarifications before we begin.
+
+1. Chemical equation input
+How would you like users to enter their balanced chemical equations?
+
+For example:
+
+2H2 + O2 -> 2H2O
+
+There are two possible approaches:
+
+Option A: The user enters the entire balanced equation into one text box. The program interprets the equation and extracts the compounds and coefficients.
+
+Option B: The user enters each reactant and product separately, including its coefficient and molecular mass.
+
+Option A provides a more realistic chemistry assistant, but requires more complicated equation parsing. Option B is considerably easier to implement and explain in a beginner coding class.
+
+2. Number of reactants and products
+Should the program support:
+
+Any number of reactants and products?
+
+A maximum of two reactants and two products?
+
+Exactly two reactants and one product?
+
+I recommend allowing multiple reactants and products if we can implement it without making the code unnecessarily complicated.
+
+3. Molecular masses
+I recommend having users manually enter the molecular mass of every compound in g/mol.
+
+For example:
+
+Compound
+
+Molecular mass
+
+H2
+
+2.016 g/mol
+
+O2
+
+32.00 g/mol
+
+H2O
+
+18.015 g/mol
+
+This will also avoid relying on external chemistry libraries or databases.
+
+4. Heat of reaction (ΔH)
+I recommend asking users to enter ΔH in kJ/mol of reaction as written in the balanced equation.
+
+For example, if:
+
+2
+H
+2
++
+O
+2
+→
+2
+H
+2
+O
+2H 
+2
+​
+ +O 
+2
+​
+ →2H 
+2
+​
+ O
+and ΔH = -483.6 kJ/mol, the program would determine:
+
+Negative ΔH: exothermic reaction.
+
+Positive ΔH: endothermic reaction.
+
+Heat flow per mole of product: -241.8 kJ/mol H2O.
+
+Are you comfortable using this interpretation of ΔH?
+
+5. Harvested product amount
+Should the user enter the actual harvested amount of the product in grams?
+
+I recommend this approach because it allows us to calculate:
+
+Percent Yield
+=
+Actual Yield
+Theoretical Yield
+×
+100
+Percent Yield= 
+Theoretical Yield
+Actual Yield
+​
+ ×100
+If the reaction produces multiple products, the user would need to specify which product they harvested.
+
+6. Website organization
+I would like to organize the website into several pages so that we comfortably exceed your rubric requirements.
+
+My preliminary suggestion:
+
+Home Page: Introduction and explanation of the chemistry assistant.
+
+Reaction Setup: Enter the balanced chemical equation.
+
+Reactant Information: Enter reactant masses and molecular masses.
+
+Product Information: Enter product molecular masses and harvested amounts.
+
+Reaction Conditions: Enter ΔH.
+
+Results: Display limiting reactant, theoretical yield, percent yield, and remaining reactant masses.
+
+Reaction Analysis: Display exothermic/endothermic status and heat calculations.
+
+History: Display previously calculated reactions.
+
+We could use a second dataclass to store individual chemical compounds and a list of those instances in the State dataclass. This would help satisfy your object-oriented programming and state-management requirements.
+
+One important consideration
+I want to prioritize three things throughout this project:
+
+Rubric compliance: Every requirement should be deliberately addressed, rather than added as an afterthought.
+
+Beginner-level readability: Use descriptive variable names, helper functions, type annotations, and docstrings. Any advanced techniques will be documented.
+
+Chemical accuracy: The calculations should follow the stoichiometric principles in OpenStax Chemistry 2e, Chapter 4.
+
+Once we settle these questions, I can design the website's architecture, identify the dataclasses and routes, and then write the complete implementation with unit tests.
+
+I won't start writing the code until we've established the requirements.
+
+
+
+
+
