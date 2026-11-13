@@ -18,6 +18,16 @@ from chemistry import (
     calculate_stoichiometry
 )
 
+set_website_title("Chemistry Assistant")
+set_site_information(
+    author="Matthew Fitzgerald",
+    description="Perform stoichiometry calculations.",
+    sources="Thanks to the Drafter docs and my professor.",
+    planning=[],
+    links=["https://github.com/mafitz68/MAF-Chemistry"]
+)
+hide_debug_information()
+set_website_framed(False)
 
 @dataclass
 class ReactionRecord:
