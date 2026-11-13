@@ -583,16 +583,18 @@ def reactant_info(state: State) -> Page:
             Header("REACTANT 2"),
 
             "Chemical formula (leave blank if unused):\n",
-            TextBox("r2_formula", "O2"),
+            TextBox("r2_formula", ""),
 
             "Balanced coefficient (0 if unused):\n",
-            TextBox("r2_coefficient", 1.0, "number"),
+            TextBox("r2_coefficient", 0.0, "number"),
+
 
             "Molecular mass (g/mol):\n",
-            TextBox("r2_molar_mass", 32.0, "number"),
+            TextBox("r2_molar_mass", 0.0, "number"),
+
 
             "Starting mass (g):\n",
-            TextBox("r2_mass", 80.0, "number"),
+            TextBox("r2_mass", 0.0, "number"),
 
             HorizontalRule(),
 
@@ -813,7 +815,7 @@ def save_conditions(
 
     state.delta_h_kj_per_mol = delta_h
     state.status_message = ""
-
+    
     return results(state)
 
 
@@ -1095,6 +1097,7 @@ def history(state: State) -> Page:
 # They check the routes and chemistry calculations.
 
 
+
 # Test the homepage.
 assert_has(index(State()), "Welcome to ChemistryLab")
 
@@ -1125,7 +1128,7 @@ assert_has(
 
 # Test saving reactants.
 test_state = State()
-
+test_state.reaction_name = "Hydrogen Combustion"
 assert_has(
     save_reactants(
         test_state,
@@ -1174,13 +1177,14 @@ test_result = calculate_stoichiometry(
 
 assert_equal(
     test_result.limiting_reactant,
-    "O2"
+    "H2"
 )
 
 assert_equal(
     test_result.reaction_type,
     "Exothermic"
 )
+
 
 
 # Test the results route.
