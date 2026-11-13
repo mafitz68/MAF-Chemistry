@@ -18,7 +18,7 @@ from chemistry import (
     calculate_stoichiometry
 )
 
-set_website_title("Chemistry Assistant")
+set_website_title("Chemistry Tutor")
 set_site_information(
     author="Matthew Fitzgerald",
     description="Perform stoichiometry calculations.",
