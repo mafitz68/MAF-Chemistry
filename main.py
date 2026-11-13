@@ -4,7 +4,16 @@ from typing import Optional
 from math import isfinite
 from drafter import *
 
-
+set_website_title("Chemistry Assistant")
+set_site_information(
+    author="Matthew Fitzgerald",
+    description="Stoichiometric calculator.",
+    sources="Thanks to the Drafter docs and my amazing professor.",
+    planning=[],
+    links=[]
+)
+hide_debug_information()
+set_website_framed(False)
 # ---------------------------------------------------------
 # WEBSITE CONFIGURATION
 # ---------------------------------------------------------
