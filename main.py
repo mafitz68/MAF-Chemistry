@@ -1,605 +1,1219 @@
 
-"""
-main.py
-
-Automated Chemistry Assistant
-
-A Drafter website that calculates chemical yields,
-limiting reactants, excess reactants, and reaction heat.
-"""
-
 from dataclasses import dataclass, field
-
+from typing import Optional
+from math import isfinite
 from drafter import *
 
-from chemistry import (
-    Compound,
-    parse_equation,
-    calculate_stoichiometry
+
+# ---------------------------------------------------------
+# WEBSITE CONFIGURATION
+# ---------------------------------------------------------
+
+SITE_TITLE = "ChemistryLab | Stoichiometry Assistant"
+
+set_website_title(SITE_TITLE)
+set_website_style("simple")
+set_website_framed(False)
+
+# Custom CSS gives the website a consistent scientific look.
+# This is presentation code and does not affect calculations.
+add_website_css(
+    "body",
+    "background-color: #f1f5f9; color: #183047; "
+    "font-family: Arial, sans-serif;"
 )
 
-set_website_title("Chemistry Tutor")
-set_site_information(
-    author="Matthew Fitzgerald",
-    description="Perform stoichiometry calculations.",
-    sources="Thanks to the Drafter docs and my professor.",
-    planning=[],
-    links=["https://github.com/mafitz68/MAF-Chemistry"]
+add_website_css(
+    "button",
+    "background-color: #087f8c; color: white; "
+    "border-radius: 8px; padding: 10px 18px; "
+    "border: none; font-weight: bold;"
 )
-hide_debug_information()
-set_website_framed(False)
+
+add_website_css(
+    "input",
+    "border: 1px solid #cbd5e1; border-radius: 6px; "
+    "padding: 9px; margin: 5px;"
+)
+
+add_website_css(
+    "table",
+    "background-color: white; border-collapse: collapse; "
+    "width: 100%; margin-top: 12px;"
+)
+
+add_website_css(
+    "th",
+    "background-color: #183047; color: white; "
+    "padding: 12px;"
+)
+
+add_website_css(
+    "td",
+    "padding: 10px; border-bottom: 1px solid #dbe3eb;"
+)
+
+add_website_css(
+    "a",
+    "color: #087f8c; font-weight: bold;"
+)
+
+
+# ---------------------------------------------------------
+# DATACLASSES
+# ---------------------------------------------------------
+
+@dataclass
+class Chemical:
+    """Store the information entered for one chemical compound."""
+
+    formula: str
+    coefficient: float
+    molar_mass_g_mol: float
+    starting_mass_g: float
+    harvested_mass_g: float = 0.0
+
+
+@dataclass
+class ReactantResult:
+    """Store the calculated results for one reactant."""
+
+    formula: str
+    starting_moles: float
+    remaining_moles: float
+    remaining_mass_g: float
+    status: str
+
+
+@dataclass
+class ProductResult:
+    """Store the calculated results for one product."""
+
+    formula: str
+    theoretical_mass_g: float
+    harvested_mass_g: float
+    percent_yield: float
+    heat_per_mole_kj: float
+
+
+@dataclass
+class CalculationResult:
+    """Store all results from one stoichiometry calculation."""
+
+    limiting_reactant: str
+    reaction_extent_mol: float
+    reaction_type: str
+    total_heat_kj: float
+    reactant_results: list[ReactantResult] = field(
+        default_factory=list
+    )
+    product_results: list[ProductResult] = field(
+        default_factory=list
+    )
+
 
 @dataclass
 class ReactionRecord:
-    """Stores a previously completed reaction calculation."""
+    """Store a completed reaction in the user's history."""
 
+    reaction_name: str
     equation: str
-    product: str
-    theoretical_yield: float
-    harvested_mass: float
-    percent_yield: float
+    limiting_reactant: str
+    yield_summary: str
+    total_heat_kj: float
 
+
+# ---------------------------------------------------------
+# APPLICATION STATE
+# ---------------------------------------------------------
 
 @dataclass
 class State:
-    """Stores all information needed by the website."""
+    """Store all information shared between website routes."""
 
-    equation: str = ""
+    reaction_name: str = "Untitled Reaction"
 
-    reactants: list[Compound] = field(default_factory=list)
-    products: list[Compound] = field(default_factory=list)
+    reactants: list[Chemical] = field(default_factory=list)
 
-    selected_product: str = ""
-    harvested_mass_g: float = 0.0
-    delta_h: float = 0.0
+    products: list[Chemical] = field(default_factory=list)
 
-    results: dict = field(default_factory=dict)
+    delta_h_kj_per_mol: float = 0.0
 
-    result_summary: str = ""
-    error_message: str = ""
+    latest_result: Optional[CalculationResult] = None
+
+    latest_equation: str = ""
 
     history: list[ReactionRecord] = field(default_factory=list)
 
+    status_message: str = ""
 
-def create_navigation() -> list:
-    """Create the navigation buttons used throughout the website."""
 
-    return [
-        Button("Home", "index"),
-        Button("New Reaction", "reaction_setup"),
-        Button("History", "history")
+# ---------------------------------------------------------
+# GENERAL HELPER FUNCTIONS
+# ---------------------------------------------------------
+
+def format_number(value: float) -> str:
+    """Format a number to four decimal places for display."""
+
+    return f"{value:,.4f}"
+
+
+def format_coefficient(coefficient: float) -> str:
+    """Format a reaction coefficient without unnecessary zeros."""
+
+    if abs(coefficient - 1.0) < 0.000001:
+        return ""
+
+    return f"{coefficient:g} "
+
+
+def create_equation(
+    reactants: list[Chemical],
+    products: list[Chemical]
+) -> str:
+    """Create a readable chemical equation from compound lists."""
+
+    reactant_side = " + ".join(
+        format_coefficient(chemical.coefficient)
+        + chemical.formula
+        for chemical in reactants
+    )
+
+    product_side = " + ".join(
+        format_coefficient(chemical.coefficient)
+        + chemical.formula
+        for chemical in products
+    )
+
+    return reactant_side + " → " + product_side
+
+
+def page_shell(
+    state: State,
+    title: str,
+    content: list
+) -> Page:
+    """Create a consistent layout and navigation for every page."""
+
+    navigation = [
+        Link("Home", "index"),
+        "  |  ",
+        Link("Setup", "reaction_setup"),
+        "  |  ",
+        Link("Reactants", "reactant_info"),
+        "  |  ",
+        Link("Products", "product_info"),
+        "  |  ",
+        Link("Conditions", "conditions"),
+        "  |  ",
+        Link("Results", "results"),
+        "  |  ",
+        Link("Analysis", "analysis"),
+        "  |  ",
+        Link("History", "history"),
+        HorizontalRule()
     ]
 
+    return Page(
+        state,
+        [
+            Header("CHEMISTRYLAB"),
+            "STOICHIOMETRY ASSISTANT  |  CHEMISTRY 2e\n",
+        ] + navigation + [
+            Header(title)
+        ] + content
+    )
 
-def create_mass_template(reactants: list[Compound]) -> str:
-    """Create an example reactant mass input for the user."""
 
-    template = ""
+def build_chemical(
+    formula: str,
+    coefficient: float,
+    molar_mass: float,
+    mass: float,
+    is_product: bool,
+    allow_empty: bool
+) -> tuple[Optional[Chemical], str]:
+    """Validate user input and create a Chemical instance."""
 
-    for compound in reactants:
-        template += compound.formula + "=0\n"
+    formula = formula.strip()
 
-    return template
+    # An empty second compound means the user only has one.
+    if not formula:
+        if allow_empty:
+            if (
+                coefficient != 0
+                or molar_mass != 0
+                or mass != 0
+            ):
+                return None, (
+                    "Enter a formula for the second compound "
+                    "or leave all its fields at zero."
+                )
+
+            return None, ""
+
+        return None, "The first compound's formula is required."
+
+    if coefficient <= 0:
+        return None, "Every compound needs a positive coefficient."
+
+    if molar_mass <= 0:
+        return None, "Molecular mass must be greater than zero."
+
+    if not isfinite(coefficient) or not isfinite(molar_mass):
+        return None, "Enter valid finite numerical values."
+
+    if not isfinite(mass) or mass < 0:
+        return None, "Masses must be finite and cannot be negative."
+
+    if not is_product and mass <= 0:
+        return None, "Starting reactant mass must be greater than zero."
+
+    return Chemical(
+        formula,
+        coefficient,
+        molar_mass,
+        0.0 if is_product else mass,
+        mass if is_product else 0.0
+    ), ""
 
 
-def save_reactant_masses(
-    reactants: list[Compound],
-    mass_text: str
-) -> None:
-    """
-    Read reactant masses from the user's text area.
+# ---------------------------------------------------------
+# CHEMISTRY CALCULATION FUNCTIONS
+# ---------------------------------------------------------
 
-    Expected format:
-    H2=4.0
-    O2=32.0
-    """
+def calculate_stoichiometry(
+    reactants: list[Chemical],
+    products: list[Chemical],
+    delta_h: float
+) -> CalculationResult:
+    """Calculate limiting reactants, yields, and reaction heat."""
 
-    entered_masses = {}
-
-    for line in mass_text.splitlines():
-        if line.strip() == "":
-            continue
-
-        if "=" not in line:
-            raise ValueError(
-                "Use the format Formula=Mass for every reactant."
-            )
-
-        formula, mass_text_value = line.split("=", 1)
-
-        formula = formula.strip()
-
-        if formula in entered_masses:
-            raise ValueError("A reactant was entered twice.")
-
-        try:
-            mass = float(mass_text_value.strip())
-        except ValueError:
-            raise ValueError("Reactant masses must be numbers.")
-
-        if mass <= 0:
-            raise ValueError("Reactant masses must be positive.")
-
-        entered_masses[formula] = mass
-
-    if len(entered_masses) != len(reactants):
+    if not reactants or not products:
         raise ValueError(
-            "Enter a mass for every reactant exactly once."
+            "At least one reactant and one product are required."
         )
 
-    for compound in reactants:
-        if compound.formula not in entered_masses:
-            raise ValueError(
-                "Missing mass for " + compound.formula
+    # Calculate how many moles of reaction each reactant
+    # could support based on its balanced coefficient.
+    reaction_amounts = []
+
+    for reactant in reactants:
+        available_moles = (
+            reactant.starting_mass_g
+            / reactant.molar_mass_g_mol
+        )
+
+        reaction_amounts.append(
+            available_moles / reactant.coefficient
+        )
+
+    # The smallest reaction amount identifies the limiting reagent.
+    reaction_extent = min(reaction_amounts)
+
+    limiting_index = reaction_amounts.index(reaction_extent)
+
+    if len(reactants) == 1:
+        limiting_reactant = reactants[0].formula
+
+    elif abs(
+        reaction_amounts[0] - reaction_amounts[1]
+    ) < 0.000000001:
+        limiting_reactant = "Both reactants"
+
+    else:
+        limiting_reactant = reactants[limiting_index].formula
+
+    # Calculate the remaining mass of each reactant.
+    reactant_results = []
+
+    for reactant in reactants:
+        starting_moles = (
+            reactant.starting_mass_g
+            / reactant.molar_mass_g_mol
+        )
+
+        consumed_moles = (
+            reactant.coefficient * reaction_extent
+        )
+
+        remaining_moles = max(
+            0.0,
+            starting_moles - consumed_moles
+        )
+
+        remaining_mass = (
+            remaining_moles * reactant.molar_mass_g_mol
+        )
+
+        if remaining_moles < 0.000000001:
+            status = "Limiting"
+        else:
+            status = "Excess"
+
+        reactant_results.append(
+            ReactantResult(
+                reactant.formula,
+                starting_moles,
+                remaining_moles,
+                remaining_mass,
+                status
             )
-
-        compound.starting_mass_g = (
-            entered_masses[compound.formula]
         )
 
+    # Calculate the theoretical yield of every product.
+    product_results = []
+
+    for product in products:
+        theoretical_moles = (
+            product.coefficient * reaction_extent
+        )
+
+        theoretical_mass = (
+            theoretical_moles * product.molar_mass_g_mol
+        )
+
+        if theoretical_mass > 0:
+            percent_yield = (
+                product.harvested_mass_g
+                / theoretical_mass
+            ) * 100
+        else:
+            percent_yield = 0.0
+
+        # Delta H is given per mole of reaction as written.
+        heat_per_mole = (
+            delta_h / product.coefficient
+        )
+
+        product_results.append(
+            ProductResult(
+                product.formula,
+                theoretical_mass,
+                product.harvested_mass_g,
+                percent_yield,
+                heat_per_mole
+            )
+        )
+
+    # Determine the thermochemical classification.
+    if delta_h < 0:
+        reaction_type = "Exothermic"
+
+    elif delta_h > 0:
+        reaction_type = "Endothermic"
+
+    else:
+        reaction_type = "Thermoneutral"
+
+    total_heat = delta_h * reaction_extent
+
+    return CalculationResult(
+        limiting_reactant,
+        reaction_extent,
+        reaction_type,
+        total_heat,
+        reactant_results,
+        product_results
+    )
+
+
+def create_history_record(
+    state: State,
+    result: CalculationResult
+) -> ReactionRecord:
+    """Convert the latest calculation into a history record."""
+
+    yield_parts = []
+
+    for product in result.product_results:
+        yield_parts.append(
+            product.formula
+            + ": "
+            + format_number(product.percent_yield)
+            + "%"
+        )
+
+    yield_summary = ", ".join(yield_parts)
+
+    return ReactionRecord(
+        state.reaction_name,
+        state.latest_equation,
+        result.limiting_reactant,
+        yield_summary,
+        result.total_heat_kj
+    )
+
+
+# ---------------------------------------------------------
+# PAGE 1: HOME PAGE
+# ---------------------------------------------------------
 
 @route
 def index(state: State) -> Page:
-    """Display the homepage."""
+    """Display the main dashboard and project introduction."""
 
-    return Page(state, [
-        Header("Automated Chemistry Assistant"),
+    return page_shell(
+        state,
+        "Welcome to ChemistryLab",
+        [
+            "Analyze chemical reactions with an organized "
+            "stoichiometry calculator.\n",
 
-        "Welcome to your automated stoichiometry calculator.",
+            Header("YOUR CHEMISTRY WORKSPACE"),
 
-        Paragraph(
-            "Determine limiting reactants, theoretical yields, "
-            "percent yields, remaining reactant masses, and "
-            "reaction heat."
-        ),
+            "Enter a balanced chemical equation, provide the "
+            "necessary measurements, and receive a detailed "
+            "breakdown of your reaction.\n",
 
-        Header("How It Works"),
+            Header("CALCULATION FEATURES"),
 
-        "1. Enter a balanced chemical equation.",
-        "2. Enter the starting masses of your reactants.",
-        "3. Select your product and enter its harvested mass.",
-        "4. Enter the enthalpy change of the reaction.",
-        "5. Review your calculated results.",
+            "01  Limiting and excess reactants\n",
+            "02  Theoretical product yields\n",
+            "03  Percent yields for each product\n",
+            "04  Remaining reactant masses\n",
+            "05  Exothermic and endothermic reactions\n",
+            "06  Heat flow per mole of product\n",
 
-        Header("Get Started"),
+            HorizontalRule(),
 
-        Button("Start a New Reaction", "reaction_setup"),
+            Header("GET STARTED"),
 
-        Button("View Reaction History", "history")
-    ])
+            "Begin by entering the name of your reaction.\n",
 
+            Button("Start a New Reaction", "reaction_setup"),
+
+            Button("View Previous Reactions", "history"),
+
+            "\n",
+
+            "Current reaction: " + state.reaction_name
+        ]
+    )
+
+
+# ---------------------------------------------------------
+# PAGE 2: REACTION SETUP
+# ---------------------------------------------------------
 
 @route
 def reaction_setup(state: State) -> Page:
-    """Allow the user to enter a chemical reaction."""
+    """Ask the user to name the chemical reaction."""
 
-    return Page(state, [
-        Header("Reaction Setup"),
+    return page_shell(
+        state,
+        "Step 1 | Reaction Setup",
+        [
+            "Give your reaction a name so that you can "
+            "identify it in your history.\n",
 
-        "Enter your balanced chemical equation.",
+            "Reaction Name:\n",
 
-        Paragraph(
-            "Example: 2 H2 + O2 -> 2 H2O"
-        ),
+            TextBox("reaction_name", state.reaction_name),
 
-        "Chemical Equation:",
-        TextBox("equation", state.equation),
+            "\n",
 
-        Button("Submit Equation", "parse_reaction"),
+            Button("Continue to Reactants", "save_reaction_name"),
 
-        state.error_message,
-
-        *create_navigation()
-    ])
+            "Your reaction must already be balanced. "
+            "Enter its coefficients on the following pages."
+        ]
+    )
 
 
 @route
-def parse_reaction(state: State, equation: str) -> Page:
-    """Parse the equation and save its reactants and products."""
+def save_reaction_name(
+    state: State,
+    reaction_name: str
+) -> Page:
+    """Save the reaction name and continue to reactant inputs."""
 
-    state.equation = equation.strip()
-    state.error_message = ""
-
-    try:
-        reactants, products = parse_equation(state.equation)
-
-        state.reactants = reactants
-        state.products = products
-
-        state.selected_product = products[0].formula
-
-        state.harvested_mass_g = 0.0
-        state.delta_h = 0.0
-        state.results = {}
-        state.result_summary = ""
-
-        return reactant_inputs(state)
-
-    except Exception as error:
-        state.error_message = str(error)
+    if not reaction_name.strip():
+        state.status_message = "Please enter a reaction name."
         return reaction_setup(state)
 
+    state.reaction_name = reaction_name.strip()
+    state.status_message = ""
+
+    return reactant_info(state)
+
+
+# ---------------------------------------------------------
+# PAGE 3: REACTANT INFORMATION
+# ---------------------------------------------------------
 
 @route
-def reactant_inputs(state: State) -> Page:
-    """Display the reactant mass input page."""
+def reactant_info(state: State) -> Page:
+    """Display input fields for one or two reactants."""
 
-    return Page(state, [
-        Header("Reactant Starting Masses"),
+    return page_shell(
+        state,
+        "Step 2 | Reactant Information",
+        [
+            "Enter the information for your reactants.\n",
 
-        "Enter the starting mass of every reactant in grams.",
+            "Molecular masses must be entered in g/mol.\n",
+            "Starting masses must be entered in grams.\n",
 
-        Paragraph(
-            "Use one line per reactant in the format Formula=Mass."
-        ),
+            Header("REACTANT 1"),
 
-        Paragraph(
-            "Example:\nH2=4.0\nO2=32.0"
-        ),
+            "Chemical formula:\n",
+            TextBox("r1_formula", "H2"),
 
-        TextArea(
-            "mass_text",
-            create_mass_template(state.reactants),
-            rows=6
-        ),
+            "Balanced coefficient:\n",
+            TextBox("r1_coefficient", 2.0, "number"),
 
-        Button("Save Reactant Masses", "save_masses"),
+            "Molecular mass (g/mol):\n",
+            TextBox("r1_molar_mass", 2.016, "number"),
 
-        state.error_message,
+            "Starting mass (g):\n",
+            TextBox("r1_mass", 10.0, "number"),
 
-        *create_navigation()
-    ])
+            HorizontalRule(),
 
+            Header("REACTANT 2"),
 
-@route
-def save_masses(state: State, mass_text: str) -> Page:
-    """Save the starting masses of all reactants."""
+            "Chemical formula (leave blank if unused):\n",
+            TextBox("r2_formula", "O2"),
 
-    state.error_message = ""
+            "Balanced coefficient (0 if unused):\n",
+            TextBox("r2_coefficient", 1.0, "number"),
 
-    try:
-        save_reactant_masses(state.reactants, mass_text)
+            "Molecular mass (g/mol):\n",
+            TextBox("r2_molar_mass", 32.0, "number"),
 
-        return product_inputs(state)
+            "Starting mass (g):\n",
+            TextBox("r2_mass", 80.0, "number"),
 
-    except ValueError as error:
-        state.error_message = str(error)
-        return reactant_inputs(state)
+            HorizontalRule(),
 
+            Button("Save Reactants", "save_reactants"),
 
-@route
-def product_inputs(state: State) -> Page:
-    """Allow the user to select a product."""
-
-    if not state.products:
-        return Page(state, [
-            Header("No Reaction Found"),
-            Button("Enter a Reaction", "reaction_setup")
-        ])
-
-    product_options = []
-
-    for compound in state.products:
-        product_options.append(compound.formula)
-
-    return Page(state, [
-        Header("Product Information"),
-
-        "Select the product you harvested.",
-
-        SelectBox(
-            "selected_product",
-            product_options,
-            state.selected_product
-        ),
-
-        "Enter the harvested product mass in grams:",
-
-        TextBox("harvested_mass", "0.0"),
-
-        Button("Save Product Information", "save_product"),
-
-        state.error_message,
-
-        *create_navigation()
-    ])
+            state.status_message
+        ]
+    )
 
 
 @route
-def save_product(
+def save_reactants(
     state: State,
-    selected_product: str,
-    harvested_mass: str
+    r1_formula: str,
+    r1_coefficient: float,
+    r1_molar_mass: float,
+    r1_mass: float,
+    r2_formula: str,
+    r2_coefficient: float,
+    r2_molar_mass: float,
+    r2_mass: float
 ) -> Page:
-    """Save the selected product and harvested mass."""
+    """Validate and save both reactant entries."""
 
-    state.error_message = ""
+    reactant_one, error = build_chemical(
+        r1_formula,
+        r1_coefficient,
+        r1_molar_mass,
+        r1_mass,
+        False,
+        False
+    )
 
-    try:
-        mass = float(harvested_mass)
+    if error:
+        state.status_message = error
+        return reactant_info(state)
 
-        if mass < 0:
-            raise ValueError(
-                "Harvested mass cannot be negative."
-            )
+    reactant_two, error = build_chemical(
+        r2_formula,
+        r2_coefficient,
+        r2_molar_mass,
+        r2_mass,
+        False,
+        True
+    )
 
-        state.selected_product = selected_product
-        state.harvested_mass_g = mass
+    if error:
+        state.status_message = error
+        return reactant_info(state)
 
-        return conditions(state)
+    state.reactants = [reactant_one]
 
-    except ValueError:
-        state.error_message = (
-            "Enter a valid non-negative harvested mass in grams."
-        )
+    if reactant_two is not None:
+        state.reactants.append(reactant_two)
 
-        return product_inputs(state)
+    state.latest_result = None
+    state.status_message = ""
 
+    return product_info(state)
+
+
+# ---------------------------------------------------------
+# PAGE 4: PRODUCT INFORMATION
+# ---------------------------------------------------------
+
+@route
+def product_info(state: State) -> Page:
+    """Display input fields for one or two products."""
+
+    return page_shell(
+        state,
+        "Step 3 | Product Information",
+        [
+            "Enter the molecular masses and harvested amounts "
+            "of your products.\n",
+
+            "Molecular masses must be entered in g/mol.\n",
+            "Harvested amounts must be entered in grams.\n",
+
+            Header("PRODUCT 1"),
+
+            "Chemical formula:\n",
+            TextBox("p1_formula", "H2O"),
+
+            "Balanced coefficient:\n",
+            TextBox("p1_coefficient", 2.0, "number"),
+
+            "Molecular mass (g/mol):\n",
+            TextBox("p1_molar_mass", 18.015, "number"),
+
+            "Harvested amount (g):\n",
+            TextBox("p1_mass", 0.0, "number"),
+
+            HorizontalRule(),
+
+            Header("PRODUCT 2"),
+
+            "Chemical formula (leave blank if unused):\n",
+            TextBox("p2_formula", ""),
+
+            "Balanced coefficient (0 if unused):\n",
+            TextBox("p2_coefficient", 0.0, "number"),
+
+            "Molecular mass (g/mol):\n",
+            TextBox("p2_molar_mass", 0.0, "number"),
+
+            "Harvested amount (g):\n",
+            TextBox("p2_mass", 0.0, "number"),
+
+            HorizontalRule(),
+
+            Button("Save Products", "save_products"),
+
+            state.status_message
+        ]
+    )
+
+
+@route
+def save_products(
+    state: State,
+    p1_formula: str,
+    p1_coefficient: float,
+    p1_molar_mass: float,
+    p1_mass: float,
+    p2_formula: str,
+    p2_coefficient: float,
+    p2_molar_mass: float,
+    p2_mass: float
+) -> Page:
+    """Validate and save both product entries."""
+
+    product_one, error = build_chemical(
+        p1_formula,
+        p1_coefficient,
+        p1_molar_mass,
+        p1_mass,
+        True,
+        False
+    )
+
+    if error:
+        state.status_message = error
+        return product_info(state)
+
+    product_two, error = build_chemical(
+        p2_formula,
+        p2_coefficient,
+        p2_molar_mass,
+        p2_mass,
+        True,
+        True
+    )
+
+    if error:
+        state.status_message = error
+        return product_info(state)
+
+    state.products = [product_one]
+
+    if product_two is not None:
+        state.products.append(product_two)
+
+    state.latest_result = None
+    state.status_message = ""
+
+    return conditions(state)
+
+
+# ---------------------------------------------------------
+# PAGE 5: REACTION CONDITIONS
+# ---------------------------------------------------------
 
 @route
 def conditions(state: State) -> Page:
-    """Collect the enthalpy change of the reaction."""
+    """Ask the user to enter the reaction enthalpy."""
 
-    return Page(state, [
-        Header("Reaction Conditions"),
+    return page_shell(
+        state,
+        "Step 4 | Reaction Conditions",
+        [
+            Header("HEAT OF REACTION"),
 
-        Paragraph(
-            "Enter ΔH in kJ per mole of reaction AS WRITTEN "
-            "in your balanced chemical equation."
-        ),
+            "Enter the reaction enthalpy, ΔH, in "
+            "kJ/mol of reaction as written in your "
+            "balanced equation.\n",
 
-        Paragraph(
-            "Negative ΔH = Exothermic (releases heat)."
-        ),
+            "A negative value indicates an exothermic reaction.\n",
+            "A positive value indicates an endothermic reaction.\n",
 
-        Paragraph(
-            "Positive ΔH = Endothermic (absorbs heat)."
-        ),
+            "ΔH (kJ/mol of reaction):\n",
 
-        Paragraph(
-            "Example: Enter -100 for a reaction with "
-            "ΔH = -100 kJ/mol of reaction."
-        ),
+            TextBox(
+                "delta_h",
+                state.delta_h_kj_per_mol,
+                "number"
+            ),
 
-        "Enthalpy Change (kJ/mol of reaction):",
+            "\n",
 
-        TextBox("delta_h_text", "0.0"),
+            Button("Calculate Reaction", "save_conditions"),
 
-        Button("Calculate Reaction", "calculate"),
-
-        state.error_message,
-
-        *create_navigation()
-    ])
+            state.status_message
+        ]
+    )
 
 
 @route
-def calculate(state: State, delta_h_text: str) -> Page:
-    """Perform all chemistry calculations."""
+def save_conditions(
+    state: State,
+    delta_h: float
+) -> Page:
+    """Save the reaction enthalpy and calculate the results."""
 
-    state.error_message = ""
-
-    try:
-        delta_h = float(delta_h_text)
-
-        state.delta_h = delta_h
-
-        results = calculate_stoichiometry(
-            state.reactants,
-            state.products,
-            state.selected_product,
-            state.harvested_mass_g,
-            state.delta_h
-        )
-
-        state.results = results
-
-        state.result_summary = (
-            "Limiting Reactant: "
-            + results["limiting_reactant"]
-            + "\nTheoretical Yield: "
-            + format(results["theoretical_yield"], ".4f")
-            + " g\nHarvested Mass: "
-            + format(results["harvested_mass"], ".4f")
-            + " g\nPercent Yield: "
-            + format(results["percent_yield"], ".2f")
-            + "%\nReaction Type: "
-            + results["heat_type"]
-            + "\nHeat per Mole of Product: "
-            + format(results["heat_per_mole"], ".4f")
-            + " kJ/mol"
-        )
-
-        record = ReactionRecord(
-            state.equation,
-            state.selected_product,
-            results["theoretical_yield"],
-            results["harvested_mass"],
-            results["percent_yield"]
-        )
-
-        state.history.append(record)
-
-        return results_page(state)
-
-    except ValueError as error:
-        state.error_message = (
-            "Calculation error: " + str(error)
-        )
-
+    if not isfinite(delta_h):
+        state.status_message = "Enter a valid ΔH value."
         return conditions(state)
 
+    state.delta_h_kj_per_mol = delta_h
+    state.status_message = ""
+
+    return results(state)
+
+
+# ---------------------------------------------------------
+# PAGE 6: CALCULATION RESULTS
+# ---------------------------------------------------------
 
 @route
-def results_page(state: State) -> Page:
-    """Display the primary calculation results."""
+def results(state: State) -> Page:
+    """Calculate and display the reaction's stoichiometry."""
 
-    return Page(state, [
-        Header("Reaction Results"),
+    if not state.reactants or not state.products:
+        return page_shell(
+            state,
+            "Calculation Results",
+            [
+                "Please enter your reaction information first.\n",
+                Button("Reaction Setup", "reaction_setup")
+            ]
+        )
 
-        Header("Summary"),
+    result = calculate_stoichiometry(
+        state.reactants,
+        state.products,
+        state.delta_h_kj_per_mol
+    )
 
-        state.result_summary,
+    state.latest_result = result
 
-        Paragraph(
-            "For a detailed explanation of the calculations, "
-            "visit the reaction breakdown page."
-        ),
+    state.latest_equation = create_equation(
+        state.reactants,
+        state.products
+    )
 
-        Button("Detailed Breakdown", "breakdown"),
-
-        Button("New Reaction", "reaction_setup"),
-
-        Button("Reaction History", "history"),
-
-        *create_navigation()
-    ])
-
-
-@route
-def breakdown(state: State) -> Page:
-    """Display the detailed reactant and product calculations."""
-
-    if not state.results:
-        return Page(state, [
-            Header("No Results Available"),
-            Button("Start a Reaction", "reaction_setup")
-        ])
+    # Add the completed calculation to reaction history.
+    state.history.append(
+        create_history_record(state, result)
+    )
 
     content = [
-        Header("Detailed Reaction Breakdown"),
+        Header("REACTION EQUATION"),
 
-        Paragraph("Balanced Equation: " + state.equation),
+        state.latest_equation + "\n",
 
-        Header("Reactant Information")
+        Header("LIMITING REACTANT"),
+
+        "Limiting reactant: "
+        + result.limiting_reactant
+        + "\n",
+
+        "Reaction extent: "
+        + format_number(result.reaction_extent_mol)
+        + " mol\n",
+
+        HorizontalRule(),
+
+        Header("REACTANT BREAKDOWN"),
+
+        Table(
+            [
+                [
+                    item.formula,
+                    format_number(item.starting_moles),
+                    format_number(item.remaining_moles),
+                    format_number(item.remaining_mass_g),
+                    item.status
+                ]
+                for item in result.reactant_results
+            ],
+            [
+                "Reactant",
+                "Initial Moles",
+                "Remaining Moles",
+                "Remaining Mass (g)",
+                "Status"
+            ]
+        ),
+
+        HorizontalRule(),
+
+        Header("PRODUCT YIELDS"),
+
+        Table(
+            [
+                [
+                    item.formula,
+                    format_number(item.theoretical_mass_g),
+                    format_number(item.harvested_mass_g),
+                    format_number(item.percent_yield) + "%"
+                ]
+                for item in result.product_results
+            ],
+            [
+                "Product",
+                "Theoretical Yield (g)",
+                "Harvested (g)",
+                "Percent Yield"
+            ]
+        ),
+
+        HorizontalRule(),
+
+        Header("THERMOCHEMISTRY"),
+
+        "Reaction classification: "
+        + result.reaction_type
+        + "\n",
+
+        "Total heat flow: "
+        + format_number(result.total_heat_kj)
+        + " kJ\n",
+
+        Button("View Detailed Heat Analysis", "analysis"),
+
+        Button("View Reaction History", "history"),
+
+        Button("Return Home", "index")
     ]
 
-    # This loop processes every reactant class instance.
-    for compound in state.reactants:
-        content.append(
-            Paragraph(
-                compound.formula
-                + "\nStarting Mass: "
-                + format(compound.starting_mass_g, ".4f")
-                + " g\nAvailable Moles: "
-                + format(compound.available_moles, ".4f")
-                + " mol\nConsumed Moles: "
-                + format(compound.consumed_moles, ".4f")
-                + " mol\nRemaining Mass: "
-                + format(compound.remaining_mass_g, ".4f")
-                + " g"
-            )
-        )
-
-    content.append(Header("Product Information"))
-
-    for compound in state.products:
-        content.append(
-            Paragraph(
-                compound.formula
-                + "\nTheoretical Yield: "
-                + format(compound.theoretical_mass_g, ".4f")
-                + " g"
-            )
-        )
-
-    content.append(Header("Reaction Heat"))
-
-    content.append(
-        Paragraph(
-            "Enthalpy Change: "
-            + str(state.delta_h)
-            + " kJ/mol of reaction"
-        )
+    return page_shell(
+        state,
+        "Calculation Results",
+        content
     )
 
-    content.append(
-        Paragraph(
-            "Reaction Type: "
-            + state.results["heat_type"]
+
+# ---------------------------------------------------------
+# PAGE 7: DETAILED REACTION ANALYSIS
+# ---------------------------------------------------------
+
+@route
+def analysis(state: State) -> Page:
+    """Display detailed thermochemical calculations."""
+
+    if state.latest_result is None:
+        return page_shell(
+            state,
+            "Reaction Analysis",
+            [
+                "No completed calculation is available.\n",
+                Button("Calculate a Reaction", "reaction_setup")
+            ]
         )
+
+    result = state.latest_result
+
+    content = [
+        Header("REACTION CLASSIFICATION"),
+
+        result.reaction_type + "\n",
+
+        "Entered ΔH: "
+        + format_number(state.delta_h_kj_per_mol)
+        + " kJ/mol of reaction\n",
+
+        "Total heat flow: "
+        + format_number(result.total_heat_kj)
+        + " kJ\n",
+
+        HorizontalRule(),
+
+        Header("HEAT FLOW PER MOLE OF PRODUCT"),
+
+        "The heat of reaction is divided by each product's "
+        "balanced coefficient to determine the heat per mole "
+        "of that product.\n",
+
+        Table(
+            [
+                [
+                    product.formula,
+                    format_number(product.heat_per_mole_kj)
+                    + " kJ/mol"
+                ]
+                for product in result.product_results
+            ],
+            ["Product", "Heat per Mole of Product"]
+        ),
+
+        HorizontalRule(),
+
+        Header("INTERPRETATION"),
+
+        "Exothermic reactions release heat.\n",
+        "Endothermic reactions absorb heat.\n",
+
+        "The total heat is calculated by multiplying ΔH "
+        "by the reaction extent.\n",
+
+        Button("Back to Results", "results"),
+
+        Button("Return Home", "index")
+    ]
+
+    return page_shell(
+        state,
+        "Detailed Reaction Analysis",
+        content
     )
 
-    content.append(
-        Paragraph(
-            "Heat per Mole of Selected Product: "
-            + format(state.results["heat_per_mole"], ".4f")
-            + " kJ/mol"
-        )
-    )
 
-    content.append(
-        Paragraph(
-            "Total Heat for the Theoretical Reaction Amount: "
-            + format(state.results["total_heat"], ".4f")
-            + " kJ"
-        )
-    )
-
-    content.append(
-        Button("Return to Results", "results_page")
-    )
-
-    content.extend(create_navigation())
-
-    return Page(state, content)
-
+# ---------------------------------------------------------
+# PAGE 8: REACTION HISTORY
+# ---------------------------------------------------------
 
 @route
 def history(state: State) -> Page:
-    """Display previously calculated reactions."""
+    """Display previously completed chemical reactions."""
 
     content = [
-        Header("Reaction History")
+        Header("YOUR PREVIOUS CALCULATIONS"),
+
+        "Review the reactions that you have calculated "
+        "during this session.\n"
     ]
 
-    if len(state.history) == 0:
-        content.append("No previous calculations.")
-    else:
-        # Each saved record is an instance of ReactionRecord.
+    if state.history:
+        history_rows = []
+
+        # Iterate through the list of ReactionRecord instances.
         for record in state.history:
-            content.append(
-                Paragraph(
-                    record.equation
-                    + "\nSelected Product: "
-                    + record.product
-                    + "\nTheoretical Yield: "
-                    + format(record.theoretical_yield, ".4f")
-                    + " g\nHarvested Mass: "
-                    + format(record.harvested_mass, ".4f")
-                    + " g\nPercent Yield: "
-                    + format(record.percent_yield, ".2f")
-                    + "%"
-                )
+            history_rows.append(
+                [
+                    record.reaction_name,
+                    record.equation,
+                    record.limiting_reactant,
+                    record.yield_summary,
+                    format_number(record.total_heat_kj) + " kJ"
+                ]
             )
 
-    content.append(
-        Button("Start Another Reaction", "reaction_setup")
+            content.append(
+                record.reaction_name
+                + " — "
+                + record.equation
+                + "\n"
+            )
+
+        content.append(
+            Table(
+                history_rows,
+                [
+                    "Reaction",
+                    "Equation",
+                    "Limiting Reactant",
+                    "Product Yields",
+                    "Total Heat"
+                ]
+            )
+        )
+
+    else:
+        content.append(
+            "You have not calculated any reactions yet.\n"
+        )
+
+    content.extend(
+        [
+            HorizontalRule(),
+
+            Button("Calculate Another Reaction", "reaction_setup"),
+
+            Button("Return Home", "index")
+        ]
     )
 
-    content.extend(create_navigation())
-
-    return Page(state, content)
-
-
-@route
-def reset(state: State) -> Page:
-    """Clear the current reaction and return to the homepage."""
-
-    state.equation = ""
-    state.reactants = []
-    state.products = []
-
-    state.selected_product = ""
-    state.harvested_mass_g = 0.0
-    state.delta_h = 0.0
-
-    state.results = {}
-    state.result_summary = ""
-    state.error_message = ""
-
-    return index(state)
+    return page_shell(
+        state,
+        "Reaction History",
+        content
+    )
 
 
-if __name__ == "__main__":
-    start_server(State())
+# ---------------------------------------------------------
+# UNIT TESTS
+# ---------------------------------------------------------
+
+# The following tests run when the program starts.
+# They check the routes and chemistry calculations.
+
+
+# Test the homepage.
+assert_has(index(State()), "Welcome to ChemistryLab")
+
+
+# Test the reaction setup page.
+assert_has(
+    reaction_setup(State()),
+    "Reaction Setup"
+)
+
+
+# Test saving a reaction name.
+assert_has(
+    save_reaction_name(
+        State(),
+        "Hydrogen Combustion"
+    ),
+    "Reactant Information"
+)
+
+
+# Test the reactant information page.
+assert_has(
+    reactant_info(State()),
+    "REACTANT 1"
+)
+
+
+# Test saving reactants.
+test_state = State()
+
+assert_has(
+    save_reactants(
+        test_state,
+        "H2", 2.0, 2.016, 10.0,
+        "O2", 1.0, 32.0, 80.0
+    ),
+    "Product Information"
+)
+
+assert_equal(len(test_state.reactants), 2)
+
+
+# Test the product information page.
+assert_has(
+    product_info(State()),
+    "PRODUCT 1"
+)
+
+
+# Test saving products.
+assert_has(
+    save_products(
+        test_state,
+        "H2O", 2.0, 18.015, 5.0,
+        "", 0.0, 0.0, 0.0
+    ),
+    "Reaction Conditions"
+)
+
+assert_equal(len(test_state.products), 1)
+
+
+# Test the reaction conditions page.
+assert_has(
+    conditions(State()),
+    "Reaction Conditions"
+)
+
+
+# Test the stoichiometry calculation.
+test_result = calculate_stoichiometry(
+    test_state.reactants,
+    test_state.products,
+    -483.6
+)
+
+assert_equal(
+    test_result.limiting_reactant,
+    "O2"
+)
+
+assert_equal(
+    test_result.reaction_type,
+    "Exothermic"
+)
+
+
+# Test the results route.
+test_state.delta_h_kj_per_mol = -483.6
+
+assert_has(
+    results(test_state),
+    "Limiting Reactant"
+)
+
+assert_equal(
+    len(test_state.history),
+    1
+)
+
+
+# Test the detailed analysis route.
+assert_has(
+    analysis(test_state),
+    "Heat Flow Per Mole of Product"
+)
+
+
+# Test the history route.
+assert_has(
+    history(test_state),
+    "Hydrogen Combustion"
+)
+
+
+# Test the chemical equation helper.
+assert_equal(
+    create_equation(
+        [Chemical("H2", 2, 2.016, 10)],
+        [Chemical("H2O", 2, 18.015, 0, 5)]
+    ),
+    "2 H2 → 2 H2O"
+)
+
+
+# ---------------------------------------------------------
+# START THE WEBSITE
+# ---------------------------------------------------------
+
+start_server(State())
